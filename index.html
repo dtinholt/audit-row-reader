@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit Row Reader</title>
+<meta name="description" content="Reads decision-head audit logs in the browser, checks their hash chain across rotated files and turns them into a readable trail.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Public+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#h-in">Skip to the log</a>
+<header class="masthead">
+  <div class="mast frame">
+    <a class="brand" href="https://dinand.com/research/">Dinand Tinholt · Research</a>
+    <p class="register">Lab tools · decision-head · audit log</p>
+  </div>
+</header>
+
+<main class="frame" id="top">
+  <div class="hero">
+    <p class="kicker">Lab tool · reads logs in your browser</p>
+    <h1>Audit Row Reader</h1>
+    <p class="lede">Drop one or more decision-head audit logs here and read them as a trail. Each line shows the answer to one question and how sure the reading was. Rotated files verify as one series, and the page names the first row, or the first file boundary, that stops matching its seal.</p>
+    <p class="local"><strong>Runs in this browser tab.</strong> The page has no server, and the logs you drop or paste never leave this machine. The fonts are its one network request. Your screen settings stay in this browser.</p>
+  </div>
+
+  <section class="block" aria-labelledby="h-in">
+    <div class="rubric"><h2 id="h-in" tabindex="-1">The log</h2><p class="mono" id="srcline">nothing loaded</p></div>
+    <div class="inputs">
+      <div class="drop" id="drop">
+        <p>Drop <span class="mono">audit.jsonl</span> files here with their <span class="mono">.chain</span> seals. Several rotated files read as one series, ordered by their first timestamp.</p>
+        <div class="btnrow">
+          <label class="filebtn">Choose logs<input type="file" id="fileLog" multiple accept=".jsonl,.json,.log,.txt,.chain,application/json,text/plain"></label>
+          <label class="filebtn">Choose seals<input type="file" id="fileChain" multiple accept=".chain,.txt,text/plain"></label>
+        </div>
+        <div class="btnrow">
+          <button type="button" id="btnSample">Load the sample log</button>
+          <button type="button" id="btnSeries">Load it as three rotated files</button>
+        </div>
+        <p class="mono" style="margin-top:.6rem">A generated sample log; no deployed system wrote it. tools/make_sample.py writes it in the documented row format.</p>
+      </div>
+      <div>
+        <label for="paste" class="mono">Or paste JSONL, one row per line</label>
+        <textarea id="paste" spellcheck="false" placeholder='{"request_hash": "...", "question_id": "next_step", ...}'></textarea>
+        <div class="btnrow">
+          <button type="button" class="primary" id="btnPaste">Read pasted rows</button>
+          <button type="button" id="btnSeal" disabled>Save a seal for this log</button>
+        </div>
+        <p class="mono" id="pasteNote" role="status" aria-live="polite"></p>
+      </div>
+    </div>
+    <div class="progress hidden" id="prog" role="status" aria-live="polite">
+      <progress id="progBar" max="1" value="0" aria-label="Reading progress"></progress>
+      <span class="mono" id="progText"></span>
+      <button type="button" id="btnStop">Stop</button>
+    </div>
+    <ul class="filelist" id="fileList" aria-label="Loaded files"></ul>
+  </section>
+
+  <section class="block hidden" id="secIntegrity" aria-labelledby="h-int">
+    <div class="rubric"><h2 id="h-int">Hash chain</h2><p class="mono" id="chainMethod"></p></div>
+    <p class="verdict" id="verdict"></p>
+    <ul class="figures" id="figs"></ul>
+    <div id="boundsWrap" class="hidden">
+      <h3 style="margin-top:1rem">File boundaries</h3>
+      <ol class="bounds" id="bounds"></ol>
+    </div>
+    <p class="mono" id="lineNote"></p>
+    <details class="more">
+      <summary>How the chain is checked</summary>
+      <p style="margin-top:.6rem">decision-head writes no chain today. Its audit-log page says rows are not chained or signed, and chained row hashes sit on the README's planned list. This reader checks a chain in either of two forms.</p>
+      <p>A seal file holds a running hash for every row: <span class="mono">h[i] = sha256(h[i-1] + "\n" + row i)</span>. A first file starts from 64 zeros. A rotated file starts from the previous file's last hash, written on the seal's <span class="mono"># start:</span> line, so the files check as one series and a missing or reordered file shows at its boundary. This page or <span class="mono">tools/seal.py</span> writes seals.</p>
+      <p>If the rows carry a <span class="mono">prev_hash</span> field, the form the 2026-10-06 security review proposed (SHA-256 of the previous line), the reader checks every link, across files too. An edit to row k shows up at row k+1. An edit to the very last row cannot show up at all.</p>
+      <p>With neither, the reader checks that each line parses as a JSON object and says so.</p>
+    </details>
+  </section>
+
+  <section class="block hidden" id="secFlags" aria-labelledby="h-flags">
+    <div class="rubric"><h2 id="h-flags">Look at these</h2><p class="mono" id="savedNote" role="status" aria-live="polite"></p></div>
+    <div class="filters">
+      <label class="ctl">Band low<input type="number" id="bandLo" min="0" max="1" step="0.01" value="0.4"></label>
+      <label class="ctl">Band high<input type="number" id="bandHi" min="0" max="1" step="0.01" value="0.6"></label>
+      <label class="ctl">Identical run, rows<input type="number" id="runN" min="2" max="50" value="3"></label>
+      <label class="ctl">Same means
+        <select id="runKey"><option value="exact">the exact reading</option><option value="label">the same answer label</option></select>
+      </label>
+      <label class="ctl">Shift screen line
+        <select id="shiftAlpha"><option value="0.10">KS 10% (1.224)</option><option value="0.05">KS 5% (1.358)</option><option value="0.01">KS 1% (1.628)</option></select>
+      </label>
+      <label class="ctl">Answer-mix line<input type="number" id="tvdLine" min="0.01" max="1" step="0.01" value="0.2"></label>
+      <button type="button" id="btnReset">Reset these settings</button>
+    </div>
+    <p class="mono" id="bandNote" style="margin:-.4rem 0 .6rem"></p>
+    <div id="flagGroups"></div>
+  </section>
+
+  <section class="block hidden" id="secCases" aria-labelledby="h-cases">
+    <div class="rubric"><h2 id="h-cases">Cases</h2><p class="mono">rows grouped by request_hash</p></div>
+    <p>A case is every answered row that shares a <span class="mono">request_hash</span>: the same state and questions sent to the same model. A trailing <span class="mono">-deliberate</span> is set aside so fast and deliberate answers to one case sit together. Refused requests hash without the model id, so they stay out of this view.</p>
+    <ul class="figures" id="caseFigs"></ul>
+    <div class="filters" style="margin-top:1rem">
+      <label class="ctl">Show
+        <select id="caseFilter"><option value="changed">cases where an answer changed</option><option value="repeat">cases asked more than once</option><option value="all">every case</option></select>
+      </label>
+    </div>
+    <div id="caseList"></div>
+    <button type="button" id="btnMoreCases" class="hidden">Show more cases</button>
+  </section>
+
+  <section class="block hidden" id="secCalib" aria-labelledby="h-calib">
+    <div class="rubric"><h2 id="h-calib">Calibration by question</h2><p class="mono">yes/no questions, fast and learned rows</p></div>
+    <p class="note-box">The log holds no outcomes. This table shows how a question's answers spread across probability bins, so it cannot tell whether a 0.7 comes true seven times in ten. Read it as a distribution, and use the before and after columns to see what a calibration change did to that spread.</p>
+    <div class="filters"><label class="ctl">Question<select id="calQ"></select></label></div>
+    <div id="calCompare"></div>
+    <div id="calTables" class="caltables"></div>
+  </section>
+
+  <section class="block hidden" id="secCharts" aria-labelledby="h-charts">
+    <div class="rubric"><h2 id="h-charts">Charts</h2><p class="mono">hover a mark for its numbers</p></div>
+    <div class="filters">
+      <label class="ctl">Question<select id="chartQ"></select></label>
+      <label class="ctl">Rolling window, rows<input type="number" id="win" min="5" max="5000" value="40"></label>
+    </div>
+    <figure>
+      <figcaption><h3>Calibration drift</h3><span class="mono" id="driftNote">rolling mean of the top probability, and the share of answers flagged low_confidence, over the last N answered rows</span></figcaption>
+      <div class="chart" id="chDrift"></div>
+      <ul class="legend" id="lgDrift"></ul>
+      <div class="numbers" id="nbDrift"></div>
+    </figure>
+    <figure style="margin-top:1.75rem">
+      <figcaption><h3>Answer mix by day</h3><span class="mono" id="mixNote">share of each answer per day, for the chosen question</span></figcaption>
+      <div class="chart" id="chMix"></div>
+      <ul class="legend" id="lgMix"></ul>
+      <div class="numbers" id="nbMix"></div>
+    </figure>
+    <h3 style="margin-top:1.75rem">Probability by question</h3>
+    <p class="mono" style="margin:.2rem 0 .8rem">yes/no questions plot P(yes); choice and score questions plot the top option's probability. Count of answered rows per bin of 0.1.</p>
+    <div class="chartgrid" id="chHist"></div>
+  </section>
+
+  <section class="block hidden" id="secTrail" aria-labelledby="h-trail">
+    <div class="rubric"><h2 id="h-trail">Trail</h2><p class="mono" id="trailCount"></p></div>
+    <div class="filters">
+      <label class="ctl">Question<select id="fQ"></select></label>
+      <label class="ctl">Band
+        <select id="fBand"><option value="all">all rows</option><option value="in">server flag or entered band</option><option value="out">neither</option></select>
+      </label>
+      <label class="ctl">Mode
+        <select id="fMode"><option value="all">all</option><option value="fast">fast</option><option value="deliberate">deliberate</option><option value="learned">learned</option></select>
+      </label>
+      <label class="ctl">Go to row<input type="number" id="gotoRow" min="1" step="1" inputmode="numeric"></label>
+    </div>
+    <p class="mono scrollhint">The table scrolls down and sideways. Only the rows in view are drawn.</p>
+    <div class="vwrap" id="vwrap" tabindex="0" role="region" aria-label="Trail table, scrolls down and sideways">
+      <table class="trail" id="trail">
+        <thead><tr><th class="num" scope="col">Row</th><th scope="col">Time (UTC)</th><th scope="col">Question</th><th scope="col">Answer</th><th class="num" scope="col">Probability</th><th scope="col">Band</th><th scope="col">Mode</th><th scope="col">backend · calibration</th><th scope="col">Chain</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <pre class="raw hidden" id="raw" tabindex="-1" aria-live="polite"></pre>
+  </section>
+
+  <section class="block hidden" id="secExport" aria-labelledby="h-exp">
+    <div class="rubric"><h2 id="h-exp">Export</h2><p class="mono">files are written in this tab and saved by your browser</p></div>
+    <h3>Redaction check</h3>
+    <p>Before anything leaves the page, the reader scans every text value and every key in the loaded rows for email addresses, phone numbers, IBANs that pass their checksum, and runs of capitalised words that look like names. It keeps counts and nothing else. The 2026-10-06 security review notes that free text placed in <span class="mono">question_id</span> or in option names lands in the log, so those fields are scanned too. The name pattern also catches product and place names.</p>
+    <div id="redSummary"></div>
+    <div class="exportrow">
+      <div>
+        <h3>Flagged rows as CSV</h3>
+        <p class="mono">one line per entry under "Look at these"</p>
+        <button type="button" id="btnCsv">Export flagged rows</button>
+      </div>
+      <div>
+        <h3>The whole trail as sanitised JSONL</h3>
+        <p class="mono">keeps only the fields you tick; unreadable lines are left out; the result no longer matches any seal</p>
+        <fieldset class="fieldpick"><legend class="sr">Fields to keep</legend><div id="fieldPick"></div></fieldset>
+        <div class="btnrow"><button type="button" id="btnAllFields">Tick all</button><button type="button" id="btnNoFields">Untick all</button><button type="button" id="btnJsonl">Export sanitised JSONL</button></div>
+      </div>
+    </div>
+    <p class="mono" id="expNote" role="status" aria-live="polite"></p>
+    <div class="warnbox hidden" id="warn" role="alertdialog" aria-labelledby="warnHead" aria-describedby="warnText" tabindex="-1">
+      <p id="warnHead"><span class="stamp break">check</span> The export may carry personal data</p>
+      <p id="warnText"></p>
+      <div class="btnrow"><button type="button" id="btnWarnGo">Export anyway</button><button type="button" class="primary" id="btnWarnCancel">Cancel</button></div>
+    </div>
+  </section>
+
+  <section class="block" id="secGuide" aria-labelledby="h-guide">
+    <div class="rubric"><h2 id="h-guide">Keeping the seal</h2><p class="mono">where the .chain file should live</p></div>
+    <p>A seal helps only if the account that writes the log cannot also rewrite the seal. decision-head's 2026-10-06 security review lists the audit log as an asset that "must be complete, attributable and free of secrets and documents". It also says the files the service writes "are operator-controlled but not integrity-checked", and that without a chain "a tampered or truncated log is also undetectable".</p>
+    <p>Anything running under the service's account can edit both files when they sit side by side. That covers the service, a script, and an agent with shell access. So the seal goes somewhere that account cannot write.</p>
+    <ul class="guide">
+      <li><b>Another machine or account.</b> A one-way job copies each <span class="mono">.chain</span> file there. The log host gets no write access back.</li>
+      <li><b>Append-only or retention-locked storage.</b> decision-head's audit-log page already sends the log there: "ship it to append-only storage if you need that guarantee". Seals can share that store.</li>
+      <li><b>The last hash, written down.</b> A seal's final line commits to every row before it. Paste it into a ticket, an email or a signed note and you can check the whole file later, even if the seal file is lost.</li>
+      <li><b>Rotation.</b> Close a file with <span class="mono">tools/seal.py rotate</span>. The new seal starts from the previous file's last hash, so a dropped or reordered file breaks at its boundary.</li>
+      <li><b>Re-seal on purpose only.</b> A fresh seal over an edited log verifies cleanly. A seal written after an edit vouches for the edit.</li>
+    </ul>
+    <p class="mono">Quotes from the decision-head repository: docs/security-review-2026-10-06.md (threat model, asset A4 and boundary TB4; finding 8); docs/audit-log.md ("What the audit log does not record"). The storage advice is this build's.</p>
+  </section>
+
+  <footer>
+    <p>What the columns mean. <b>Probability</b> is P(yes) for a yes/no question and the top option's probability for choice and score. <b>Band</b> reads the row's own <span class="mono">low_confidence</span> field, which the server sets for a yes/no answer inside the configured abstain band, a degraded reading, or a deliberate answer short of samples. The log does not record the band itself. The band fields under "Look at these" start at 0.4 and 0.6, the commented example in the configuration file. The flagged list, the histograms and the calibration table re-screen every yes/no answer against whatever bounds you enter, so a log written with the band off can still be screened. "in band" marks a row inside the entered bounds that the server did not flag. <b>backend · calibration</b> shows the backend class and the first ten characters of <span class="mono">calibration_version</span>, the SHA-256 of the loaded calibration document. Rows carry no hash of the backend itself.</p>
+    <p class="mono">Sources, all in the decision-head repository: docs/audit-log.md (row fields, reconstruction, rotation by copy-truncate, "rows are not chained or signed"); docs/http-api.md (answer shapes, confidence, low_confidence); docs/configuration.md and decisionhead.example.toml (abstain band, example 0.4 and 0.6); docs/calibration.md (temperature scaling); README.md, Planned (chained row hashes); docs/security-review-2026-10-06.md, findings 8 and 9 (prev_hash proposal, free text in the log). KS lines: the textbook two-sample coefficients 1.224, 1.358 and 1.628 for 10%, 5% and 1%.</p>
+    <p><a href="https://dinand.com/research/">dinand.com/research</a></p>
+    <p class="mono" id="selfcheckLine">self-check: not run</p>
+  </footer>
+</main>
+<div class="tip" id="tip" aria-hidden="true"></div>
+<script src="core.js"></script>
+<script src="sample.js"></script>
+<script src="app.js"></script>
+<script src="selfcheck.js"></script>
+</body>
+</html>
