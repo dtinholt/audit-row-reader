@@ -17,7 +17,12 @@ jobs:
           node-version: "22"
       - uses: browser-actions/setup-chrome@v1
         id: chrome
+      - name: Chrome wrapper (the runner's kernel refuses Chrome's sandbox, so CI runs it with --no-sandbox)
+        run: |
+          BIN="$(which chrome || which google-chrome)"
+          { echo '#!/bin/sh'; echo "exec \"$BIN\" --no-sandbox --disable-dev-shm-usage \"\$@\""; } > /usr/local/bin/chrome-ci
+          chmod +x /usr/local/bin/chrome-ci
       - name: Page smoke test
-        run: CHROME="$(which chrome || which google-chrome)" sh tests/smoke.sh
+        run: CHROME=/usr/local/bin/chrome-ci sh tests/smoke.sh
       - name: Python tests
         run: python3 tests/test_tools.py
